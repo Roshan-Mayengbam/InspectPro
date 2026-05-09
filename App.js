@@ -1,20 +1,30 @@
-import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import 'react-native-gesture-handler';
+import React, { useState, useEffect } from 'react';
+import * as SplashScreen from 'expo-splash-screen';
+import { isOnboarded } from './utils/storage';
+import AppNavigator from './navigation/AppNavigator';
+
+// Keep splash visible until we finish checking onboarding state
+SplashScreen.preventAutoHideAsync();
 
 export default function App() {
-  return (
-    <View style={styles.container}>
-      <Text>Open up App.js to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
-  );
-}
+  const [initialRoute, setInitialRoute] = useState(null);
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+  useEffect(() => {
+    async function prepare() {
+      try {
+        const onboarded = await isOnboarded();
+        setInitialRoute(onboarded ? 'Home' : 'Onboarding');
+      } catch (e) {
+        setInitialRoute('Onboarding');
+      } finally {
+        await SplashScreen.hideAsync();
+      }
+    }
+    prepare();
+  }, []);
+
+  if (!initialRoute) return null;
+
+  return <AppNavigator initialRoute={initialRoute} />;
+}
