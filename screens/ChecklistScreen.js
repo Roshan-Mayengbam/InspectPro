@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     View, Text, TouchableOpacity, TextInput, ScrollView, Image,
-    StyleSheet, StatusBar, Alert,
+    StyleSheet, StatusBar, Alert, Keyboard, Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -16,14 +16,32 @@ function countDone(rooms) {
     return rooms.reduce((sum, r) => sum + r.items.filter((i) => i.status !== 'none').length, 0);
 }
 function isRoomDone(room) {
-    return room.items.every((i) => i.status !== 'none');
+    return room.items.length > 0 && room.items.every((i) => i.status !== 'none');
 }
 
 export default function ChecklistScreen({ navigation, route }) {
     const { inspectionId } = route.params;
     const [inspection, setInspection] = useState(null);
     const [activeRoomIdx, setActiveRoomIdx] = useState(0);
+    const [kbHeight, setKbHeight] = useState(0);
     const scrollRef = useRef(null);
+    const focusedCardY = useRef(0);
+
+    // Add-condition modal state
+    const [addCondVisible, setAddCondVisible] = useState(false);
+    const [newCondName, setNewCondName] = useState('');
+
+    // Track keyboard height and scroll to focused card
+    useEffect(() => {
+        const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
+            setKbHeight(e.endCoordinates.height);
+            scrollRef.current?.scrollTo({ y: focusedCardY.current, animated: true });
+        });
+        const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+            setKbHeight(0);
+        });
+        return () => { showSub.remove(); hideSub.remove(); };
+    }, []);
 
     useEffect(() => {
         getInspectionById(inspectionId).then((data) => {
@@ -49,23 +67,129 @@ export default function ChecklistScreen({ navigation, route }) {
         });
     }, []);
 
+    // Remove a condition (item) from the active room
+    const removeItem = useCallback((roomIdx, itemId) => {
+        setInspection((prev) => {
+            if (!prev) return prev;
+            const updatedRooms = prev.rooms.map((r, ri) => {
+                if (ri !== roomIdx) return r;
+                return { ...r, items: r.items.filter((it) => it.id !== itemId) };
+            });
+            const updated = { ...prev, rooms: updatedRooms };
+            updateInspection(updated.id, updated);
+            return updated;
+        });
+    }, []);
+
+    // Add a new condition (item) to the active room
+    const addCondition = useCallback(() => {
+        const clean = newCondName.trim();
+        if (!clean) {
+            setAddCondVisible(false);
+            setNewCondName('');
+            return;
+        }
+        setInspection((prev) => {
+            if (!prev) return prev;
+            const updatedRooms = prev.rooms.map((r, ri) => {
+                if (ri !== activeRoomIdx) return r;
+                const newItem = {
+                    id: r.id + '-custom-' + Date.now(),
+                    name: clean,
+                    status: 'none',
+                    note: '',
+                    photos: [],
+                };
+                return { ...r, items: [...r.items, newItem] };
+            });
+            const updated = { ...prev, rooms: updatedRooms };
+            updateInspection(updated.id, updated);
+            return updated;
+        });
+        setNewCondName('');
+        setAddCondVisible(false);
+    }, [newCondName, activeRoomIdx]);
+
+    // After a photo URI is obtained, ask owner to pick severity.
+    // IMPORTANT: uses functional setInspection so it always reads the CURRENT
+    // photos array — not the stale one captured when the camera button was tapped.
+    const askSeverityAndSave = (roomIdx, itemId, uri) => {
+        const applyPhoto = (sev) => {
+            setInspection((prev) => {
+                if (!prev) return prev;
+                const updatedRooms = prev.rooms.map((r, ri) => {
+                    if (ri !== roomIdx) return r;
+                    return {
+                        ...r,
+                        items: r.items.map((it) => {
+                            if (it.id !== itemId) return it;
+                            return { ...it, photos: [...it.photos, uri], severity: sev };
+                        }),
+                    };
+                });
+                const updated = { ...prev, rooms: updatedRooms };
+                updateInspection(updated.id, updated);   // persist
+                return updated;
+            });
+        };
+
+        Alert.alert(
+            'Issue Severity',
+            'How severe is this issue?',
+            [
+                { text: '⚠ Minor', onPress: () => applyPhoto('minor') },
+                { text: '🔴 Major', onPress: () => applyPhoto('major') },
+                { text: 'Cancel', style: 'cancel' },
+            ]
+        );
+    };
+
+
     const handleCamera = async (roomIdx, item) => {
-        const perm = await ImagePicker.requestCameraPermissionsAsync();
-        let result;
-        if (perm.granted) {
-            result = await ImagePicker.launchCameraAsync({ mediaTypes: 'Images', quality: 0.7 });
-        } else {
-            const gallPerm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (!gallPerm.granted) {
-                Alert.alert('Permission Required', 'Camera or gallery access is needed to add photos.');
-                return;
-            }
-            result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: 'Images', quality: 0.7 });
-        }
-        if (!result.canceled && result.assets?.[0]?.uri) {
-            const uri = result.assets[0].uri;
-            updateItem(roomIdx, item.id, { photos: [...item.photos, uri] });
-        }
+        // Always ask: Camera or Gallery
+        Alert.alert(
+            'Add Photo',
+            'Choose a source',
+            [
+                {
+                    text: '📷 Camera',
+                    onPress: async () => {
+                        try {
+                            const perm = await ImagePicker.requestCameraPermissionsAsync();
+                            if (!perm.granted) {
+                                Alert.alert('Permission Required', 'Camera access is needed.');
+                                return;
+                            }
+                            const result = await ImagePicker.launchCameraAsync({ mediaTypes: 'images', quality: 0.7 });
+                            if (!result.canceled && result.assets?.[0]?.uri) {
+                                askSeverityAndSave(roomIdx, item.id, result.assets[0].uri);
+                            }
+                        } catch (e) {
+                            Alert.alert('Camera Error', e?.message || String(e));
+                        }
+                    },
+                },
+                {
+                    text: '🖼 Gallery',
+                    onPress: async () => {
+                        try {
+                            const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                            if (!perm.granted) {
+                                Alert.alert('Permission Required', 'Gallery access is needed.');
+                                return;
+                            }
+                            const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: 'images', quality: 0.7 });
+                            if (!result.canceled && result.assets?.[0]?.uri) {
+                                askSeverityAndSave(roomIdx, item.id, result.assets[0].uri);
+                            }
+                        } catch (e) {
+                            Alert.alert('Gallery Error', e?.message || String(e));
+                        }
+                    },
+                },
+                { text: 'Cancel', style: 'cancel' },
+            ]
+        );
     };
 
     const handleNext = () => {
@@ -98,6 +222,44 @@ export default function ChecklistScreen({ navigation, route }) {
     return (
         <SafeAreaView style={styles.safe}>
             <StatusBar barStyle="light-content" backgroundColor={COLORS.background} />
+
+            {/* ── Add Condition Modal ───────────────────────────── */}
+            <Modal
+                transparent
+                animationType="fade"
+                visible={addCondVisible}
+                onRequestClose={() => { setAddCondVisible(false); setNewCondName(''); }}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalBox}>
+                        <Text style={styles.modalTitle}>Add Condition</Text>
+                        <Text style={styles.modalRoomName}>{activeRoom?.name}</Text>
+
+                        <TextInput
+                            style={styles.modalInput}
+                            placeholder="e.g. Balcony Railing, AC Unit…"
+                            placeholderTextColor={COLORS.textMuted}
+                            value={newCondName}
+                            onChangeText={setNewCondName}
+                            autoFocus
+                            returnKeyType="done"
+                            onSubmitEditing={addCondition}
+                        />
+
+                        <View style={styles.modalBtns}>
+                            <TouchableOpacity
+                                style={styles.modalCancel}
+                                onPress={() => { setAddCondVisible(false); setNewCondName(''); }}
+                            >
+                                <Text style={styles.modalCancelText}>CANCEL</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.modalConfirm} onPress={addCondition}>
+                                <Text style={styles.modalConfirmText}>ADD</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
 
             {/* Header */}
             <View style={styles.header}>
@@ -147,17 +309,56 @@ export default function ChecklistScreen({ navigation, route }) {
                 })}
             </ScrollView>
 
+            {/* Room sub-header: item count + Add condition button */}
+            <View style={styles.roomSubHeader}>
+                <Text style={styles.roomSubTitle}>
+                    {activeRoom.name}
+                    <Text style={styles.roomSubCount}>  {activeRoom.items.length} condition{activeRoom.items.length !== 1 ? 's' : ''}</Text>
+                </Text>
+                <TouchableOpacity
+                    style={styles.addCondBtn}
+                    onPress={() => setAddCondVisible(true)}
+                >
+                    <MaterialIcons name="add" size={14} color={COLORS.blue} />
+                    <Text style={styles.addCondText}>ADD</Text>
+                </TouchableOpacity>
+            </View>
+
             {/* Checklist items */}
-            <ScrollView ref={scrollRef} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
-                {activeRoom.items.map((item) => (
-                    <ChecklistCard
-                        key={item.id}
-                        item={item}
-                        onStatusChange={(s) => updateItem(activeRoomIdx, item.id, { status: s })}
-                        onNoteChange={(n) => updateItem(activeRoomIdx, item.id, { note: n })}
-                        onCamera={() => handleCamera(activeRoomIdx, item)}
-                    />
-                ))}
+            <ScrollView
+                ref={scrollRef}
+                contentContainerStyle={[styles.listContent, { paddingBottom: kbHeight + 20 }]}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+            >
+                {activeRoom.items.length === 0 ? (
+                    <View style={styles.emptyState}>
+                        <MaterialIcons name="checklist" size={40} color={COLORS.textMuted} />
+                        <Text style={styles.emptyText}>No conditions yet.</Text>
+                        <Text style={styles.emptyHint}>Tap ADD above to add a condition to inspect.</Text>
+                    </View>
+                ) : (
+                    activeRoom.items.map((item) => (
+                        <ChecklistCard
+                            key={item.id}
+                            item={item}
+                            onStatusChange={(s) => updateItem(activeRoomIdx, item.id, { status: s })}
+                            onNoteChange={(n) => updateItem(activeRoomIdx, item.id, { note: n })}
+                            onCamera={() => handleCamera(activeRoomIdx, item)}
+                            onNoteFocus={(y) => { focusedCardY.current = y; }}
+                            onRemove={() => {
+                                Alert.alert(
+                                    'Remove Condition',
+                                    `Remove "${item.name}" from ${activeRoom.name}?`,
+                                    [
+                                        { text: 'Cancel', style: 'cancel' },
+                                        { text: 'Remove', style: 'destructive', onPress: () => removeItem(activeRoomIdx, item.id) },
+                                    ]
+                                );
+                            }}
+                        />
+                    ))
+                )}
             </ScrollView>
 
             {/* Bottom CTA */}
@@ -178,9 +379,10 @@ export default function ChecklistScreen({ navigation, route }) {
 }
 
 // ChecklistCard sub-component
-function ChecklistCard({ item, onStatusChange, onNoteChange, onCamera }) {
+function ChecklistCard({ item, onStatusChange, onNoteChange, onCamera, onNoteFocus, onRemove }) {
     const [note, setNote] = useState(item.note || '');
     const debounceRef = useRef(null);
+    const cardY = useRef(0);
 
     // Sync note if item changed from parent
     useEffect(() => { setNote(item.note || ''); }, [item.id]);
@@ -201,7 +403,10 @@ function ChecklistCard({ item, onStatusChange, onNoteChange, onCamera }) {
     const cardBg = item.status === 'ok' ? COLORS.greenBg : item.status === 'issue' ? COLORS.redBg : COLORS.surface;
 
     return (
-        <View style={[styles.card, { borderColor: cardBorder, backgroundColor: cardBg }]}>
+        <View
+            style={[styles.card, { borderColor: cardBorder, backgroundColor: cardBg }]}
+            onLayout={(e) => { cardY.current = e.nativeEvent.layout.y; }}
+        >
             <View style={styles.cardHeader}>
                 <Text style={styles.itemName}>{item.name.toUpperCase()}</Text>
                 <View style={styles.cardActions}>
@@ -213,6 +418,10 @@ function ChecklistCard({ item, onStatusChange, onNoteChange, onCamera }) {
                     )}
                     <TouchableOpacity onPress={onCamera} style={styles.cameraBtn}>
                         <MaterialIcons name="add-a-photo" size={20} color={COLORS.textSecondary} />
+                    </TouchableOpacity>
+                    {/* Remove condition button */}
+                    <TouchableOpacity onPress={onRemove} style={styles.removeBtn}>
+                        <MaterialIcons name="close" size={18} color={COLORS.textMuted} />
                     </TouchableOpacity>
                 </View>
             </View>
@@ -250,8 +459,19 @@ function ChecklistCard({ item, onStatusChange, onNoteChange, onCamera }) {
                     value={note}
                     onChangeText={handleNoteChange}
                     textAlignVertical="top"
+                    onFocus={() => onNoteFocus && onNoteFocus(cardY.current)}
+                    onBlur={() => {
+                        // Flush debounce immediately so note is saved before navigating
+                        if (debounceRef.current) {
+                            clearTimeout(debounceRef.current);
+                            debounceRef.current = null;
+                        }
+                        onNoteChange(note);
+                    }}
                 />
             )}
+
+
 
             {item.photos.length > 0 && (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -267,6 +487,36 @@ function ChecklistCard({ item, onStatusChange, onNoteChange, onCamera }) {
 const styles = StyleSheet.create({
     safe: { flex: 1, backgroundColor: COLORS.background },
     loadingCenter: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+
+    // ── Add Condition Modal ────────────────────────────────────────
+    modalOverlay: {
+        flex: 1, backgroundColor: 'rgba(0,0,0,0.65)',
+        alignItems: 'center', justifyContent: 'center', padding: 32,
+    },
+    modalBox: {
+        width: '100%', backgroundColor: COLORS.surfaceElevated,
+        borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border,
+        padding: 24, gap: 14,
+    },
+    modalTitle: { fontSize: 15, fontWeight: '800', color: COLORS.textPrimary, textTransform: 'uppercase', letterSpacing: 1 },
+    modalRoomName: { fontSize: 12, color: COLORS.amber, fontWeight: '600', marginTop: -8 },
+    modalInput: {
+        backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.amber,
+        borderRadius: RADIUS.sm, padding: 12, color: COLORS.textPrimary, fontSize: 15,
+    },
+    modalBtns: { flexDirection: 'row', gap: 10, justifyContent: 'flex-end' },
+    modalCancel: {
+        borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.sm,
+        paddingHorizontal: 18, paddingVertical: 10,
+    },
+    modalCancelText: { fontSize: 12, fontWeight: '700', color: COLORS.textMuted, letterSpacing: 1 },
+    modalConfirm: {
+        backgroundColor: COLORS.amber, borderRadius: RADIUS.sm,
+        paddingHorizontal: 24, paddingVertical: 10,
+    },
+    modalConfirmText: { fontSize: 12, fontWeight: '800', color: COLORS.amberDark, letterSpacing: 1 },
+
+    // ── Header ───────────────────────────────────────────────────
     header: {
         height: 64, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
         paddingHorizontal: SPACING.sm, backgroundColor: COLORS.background,
@@ -274,6 +524,8 @@ const styles = StyleSheet.create({
     },
     iconBtn: { padding: SPACING.sm },
     headerAddr: { ...FONT.mono, color: COLORS.textSecondary, flex: 1, textAlign: 'center', fontSize: 12 },
+
+    // ── Progress ──────────────────────────────────────────────────
     progressBar: {
         paddingHorizontal: SPACING.md, paddingVertical: 10,
         borderBottomWidth: 1, borderBottomColor: COLORS.border, gap: 6,
@@ -283,8 +535,10 @@ const styles = StyleSheet.create({
     progressPct: { fontSize: 14, fontWeight: '700', color: COLORS.amber },
     progressTrack: { height: 4, backgroundColor: COLORS.border, borderRadius: RADIUS.full, overflow: 'hidden' },
     progressFill: { height: '100%', backgroundColor: COLORS.amber, borderRadius: RADIUS.full },
-    tabBar: { maxHeight: 52, borderBottomWidth: 1, borderBottomColor: COLORS.border },
-    tabContent: { paddingHorizontal: SPACING.md, paddingVertical: 10, gap: 6, alignItems: 'center', flexDirection: 'row' },
+
+    // ── Room Tabs ────────────────────────────────────────────────
+    tabBar: { flexShrink: 0, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+    tabContent: { paddingHorizontal: SPACING.md, paddingVertical: 8, gap: 6, alignItems: 'center', flexDirection: 'row' },
     tab: {
         flexDirection: 'row', alignItems: 'center',
         borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.sm,
@@ -295,11 +549,40 @@ const styles = StyleSheet.create({
     tabCheck: { fontSize: 11, color: COLORS.green, fontWeight: '700' },
     tabText: { ...FONT.mono, fontSize: 10, color: COLORS.textMuted },
     tabTextActive: { color: COLORS.amber },
-    listContent: { padding: SPACING.md, gap: 10, paddingBottom: 100 },
+
+    // ── Room Sub-header ──────────────────────────────────────────
+    roomSubHeader: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        paddingHorizontal: SPACING.md, paddingVertical: 8,
+        borderBottomWidth: 1, borderBottomColor: COLORS.border,
+        backgroundColor: COLORS.background,
+    },
+    roomSubTitle: { fontSize: 13, fontWeight: '700', color: COLORS.textPrimary },
+    roomSubCount: { fontSize: 11, fontWeight: '400', color: COLORS.textMuted },
+    addCondBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 5,
+        borderWidth: 1, borderColor: COLORS.blue, borderRadius: RADIUS.sm,
+        paddingHorizontal: 12, paddingVertical: 5,
+        backgroundColor: COLORS.blueBg,
+    },
+    addCondText: { ...FONT.mono, fontSize: 10, color: COLORS.blue, fontWeight: '700' },
+
+    // ── List ─────────────────────────────────────────────────────
+    listContent: { padding: SPACING.md, gap: 10, paddingBottom: 20 },
+
+    // ── Empty State ──────────────────────────────────────────────
+    emptyState: {
+        flex: 1, alignItems: 'center', justifyContent: 'center',
+        paddingVertical: 60, gap: 10,
+    },
+    emptyText: { fontSize: 16, fontWeight: '600', color: COLORS.textMuted },
+    emptyHint: { fontSize: 13, color: COLORS.textMuted, textAlign: 'center', paddingHorizontal: 24 },
+
+    // ── Card ─────────────────────────────────────────────────────
     card: { borderWidth: 1, borderRadius: RADIUS.sm, padding: 14, gap: 10 },
     cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    itemName: { ...FONT.mono, color: COLORS.textPrimary, fontSize: 12 },
-    cardActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    itemName: { ...FONT.mono, color: COLORS.textPrimary, fontSize: 12, flex: 1 },
+    cardActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     photoBadge: {
         flexDirection: 'row', alignItems: 'center', gap: 3,
         backgroundColor: COLORS.blueBg, borderWidth: 1, borderColor: COLORS.blueBorder,
@@ -307,6 +590,7 @@ const styles = StyleSheet.create({
     },
     photoBadgeText: { fontSize: 11, color: COLORS.blue, fontWeight: '700' },
     cameraBtn: { padding: 4 },
+    removeBtn: { padding: 4 },
     btnRow: { flexDirection: 'row', gap: 8 },
     stateBtn: {
         flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4,
@@ -318,9 +602,27 @@ const styles = StyleSheet.create({
         borderRadius: RADIUS.sm, padding: 10, color: COLORS.textPrimary,
         fontSize: 14, minHeight: 58, textAlignVertical: 'top',
     },
+
+    // ── Severity picker ──────────────────────────────────────────
+    severityRow: {
+        flexDirection: 'row', alignItems: 'center', gap: 8,
+    },
+    severityLabel: { ...FONT.mono, fontSize: 10, color: COLORS.textMuted, marginRight: 2 },
+    sevBtn: {
+        flex: 1, alignItems: 'center', justifyContent: 'center',
+        paddingVertical: 8, borderWidth: 1, borderColor: COLORS.border,
+        borderRadius: RADIUS.sm, backgroundColor: 'rgba(0,0,0,0.15)',
+    },
+    sevBtnText: { ...FONT.mono, fontSize: 11, color: COLORS.textMuted },
+    sevBtnMinorActive: { borderColor: COLORS.amber, backgroundColor: 'rgba(232,160,32,0.12)' },
+    sevBtnMinorText: { color: COLORS.amber, fontWeight: '700' },
+    sevBtnMajorActive: { borderColor: COLORS.red, backgroundColor: COLORS.redBg },
+    sevBtnMajorText: { color: COLORS.red, fontWeight: '700' },
+
     thumb: { width: 64, height: 64, borderRadius: RADIUS.sm, marginRight: 8, borderWidth: 1, borderColor: COLORS.border },
+
+    // ── Bottom Bar ───────────────────────────────────────────────
     bottomBar: {
-        position: 'absolute', bottom: 0, left: 0, right: 0,
         backgroundColor: COLORS.background, borderTopWidth: 1, borderTopColor: COLORS.border, padding: SPACING.md,
     },
     nextBtn: {

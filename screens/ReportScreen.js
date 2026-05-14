@@ -47,32 +47,57 @@ export default function ReportScreen({ navigation, route }) {
         setGenerating(true);
         const startTime = Date.now();
         try {
-            let RNHTMLtoPDF;
+            let generatePDF;
             try {
-                RNHTMLtoPDF = require('react-native-html-to-pdf');
-                // unwrap default export if needed
-                if (RNHTMLtoPDF.default) RNHTMLtoPDF = RNHTMLtoPDF.default;
+                const mod = require('react-native-html-to-pdf');
+                // v1.3.0 exports a named `generatePDF` function
+                generatePDF = mod.generatePDF ?? mod.default?.generatePDF ?? mod.default?.convert ?? mod.convert ?? null;
             } catch (_) {
-                RNHTMLtoPDF = null;
+                generatePDF = null;
             }
 
             const htmlString = pdfTemplate(inspection, settings);
 
-            if (RNHTMLtoPDF) {
-                const result = await RNHTMLtoPDF.convert({
+            if (generatePDF) {
+                const result = await generatePDF({
                     html: htmlString,
                     fileName: 'InspectPro-' + inspection.id,
                     directory: 'Documents',
                 });
+
+                // Native module may return null filePath on some devices
+                let pdfFilePath = result?.filePath;
+                if (pdfFilePath && !pdfFilePath.startsWith('file://')) {
+                    pdfFilePath = 'file://' + pdfFilePath;
+                }
+
                 const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
                 const updated = { ...inspection, status: 'complete' };
                 await updateInspection(updated.id, updated);
                 setInspection(updated);
                 setGenerating(false);
-                setPdfPath(result.filePath);
                 setDuration(elapsed);
-                // auto-share
-                await Sharing.shareAsync(result.filePath, { mimeType: 'application/pdf' });
+
+                if (pdfFilePath) {
+                    setPdfPath(pdfFilePath);
+                    await Sharing.shareAsync(pdfFilePath, { mimeType: 'application/pdf' });
+                } else {
+                    // filePath was null — fall back to HTML export
+                    const { FileSystem } = await import('expo-file-system');
+                    const htmlPath = FileSystem.documentDirectory + 'InspectPro-' + inspection.id + '.html';
+                    await FileSystem.writeAsStringAsync(htmlPath, htmlString, {
+                        encoding: FileSystem.EncodingType.UTF8,
+                    });
+                    setPdfPath(htmlPath);
+                    Alert.alert(
+                        'Report Saved as HTML',
+                        'The PDF could not be written to disk. An HTML report has been saved instead.',
+                        [
+                            { text: 'Share HTML', onPress: () => Sharing.shareAsync(htmlPath) },
+                            { text: 'OK' },
+                        ]
+                    );
+                }
             } else {
                 // Expo Go fallback: save as HTML
                 const { FileSystem } = await import('expo-file-system');
@@ -171,11 +196,21 @@ export default function ReportScreen({ navigation, route }) {
                                         <Text style={styles.issueLocation}>
                                             {item.roomName.toUpperCase()} · {item.name.toUpperCase()}
                                         </Text>
-                                        <Text style={styles.issueSeverity}>
-                                            {item.note && item.note.length > 20 ? 'Major' : 'Minor'}
-                                        </Text>
+                                        {/* Only show severity if a photo was taken (severity set via photo picker) */}
+                                        {!!item.severity && (
+                                            <Text style={[
+                                                styles.issueSeverity,
+                                                item.severity === 'major' && styles.issueSeverityMajor,
+                                                item.severity === 'minor' && styles.issueSeverityMinor,
+                                            ]}>
+                                                {item.severity === 'major' ? '🔴 Major' : '⚠ Minor'}
+                                            </Text>
+                                        )}
                                     </View>
-                                    {!!item.note && <Text style={styles.issueNote}>{item.note}</Text>}
+                                    {/* Always show the note if present */}
+                                    <Text style={styles.issueNote}>
+                                        {item.note ? item.note : '— Issue noted'}
+                                    </Text>
                                     {item.photos.length > 0 && (
                                         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.thumbRow}>
                                             {item.photos.map((uri, i) => (
@@ -308,6 +343,8 @@ const styles = StyleSheet.create({
     issueHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
     issueLocation: { ...FONT.mono, fontSize: 10, color: COLORS.red, flex: 1 },
     issueSeverity: { fontSize: 12, color: COLORS.textSecondary },
+    issueSeverityMajor: { color: COLORS.red, fontWeight: '700' },
+    issueSeverityMinor: { color: COLORS.amber, fontWeight: '700' },
     issueNote: { fontSize: 14, color: COLORS.textPrimary, marginBottom: 8 },
     thumbRow: { marginTop: 4 },
     thumb: { width: 64, height: 64, borderRadius: RADIUS.sm, marginRight: 8, borderWidth: 1, borderColor: COLORS.border },

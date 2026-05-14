@@ -1,57 +1,62 @@
 export function pdfTemplate(inspection, settings = {}) {
-    const issues = inspection.rooms.flatMap((room) =>
-        room.items
-            .filter((item) => item.status === 'issue')
-            .map((item) => ({ ...item, roomName: room.name }))
-    );
+  const issues = inspection.rooms.flatMap((room) =>
+    room.items
+      .filter((item) => item.status === 'issue')
+      .map((item) => ({ ...item, roomName: room.name }))
+  );
 
-    const roomRows = inspection.rooms
-        .map((room) => {
-            const issueCount = room.items.filter((i) => i.status === 'issue').length;
-            return `<tr>
+  const roomRows = inspection.rooms
+    .map((room) => {
+      const issueCount = room.items.filter((i) => i.status === 'issue').length;
+      return `<tr>
         <td>${room.name}</td>
         <td class="${issueCount > 0 ? 'issue' : 'ok'}">${issueCount > 0 ? '⚠ Issues Found' : '✓ OK'}</td>
         <td>${issueCount} issue(s)</td>
       </tr>`;
-        })
-        .join('');
+    })
+    .join('');
 
-    const detailedRows = inspection.rooms
-        .map(
-            (room) => `
+  const detailedRows = inspection.rooms
+    .map(
+      (room) => `
       <div class="room-heading">${room.name}</div>
       <table>
         <tr><th>Item</th><th>Status</th><th>Notes</th></tr>
         ${room.items
-                    .map(
-                        (item) => `
+          .map(
+            (item) => `
           <tr>
             <td>${item.name}</td>
             <td class="${item.status}">${item.status === 'ok' ? '✓ OK' : item.status === 'issue' ? '⚠ Issue' : '— N/A'
-                            }</td>
+              }</td>
             <td>${item.note || '—'}</td>
           </tr>`
-                    )
-                    .join('')}
+          )
+          .join('')}
       </table>
     `
-        )
-        .join('');
+    )
+    .join('');
 
-    const issueCards = issues
-        .map(
-            (item) => `
+  const issueCards = issues
+    .map(
+      (item) => {
+        const sev = item.severity || 'minor';
+        const sevLabel = sev === 'major' ? 'MAJOR' : 'MINOR';
+        const sevClass = sev === 'major' ? 'severity-major' : 'severity-minor';
+        return `
       <div class="issue-card">
         <div class="issue-room">${item.roomName} · ${item.name}
-          <span class="severity">${item.note && item.note.length > 20 ? 'MAJOR' : 'MINOR'}</span>
+          <span class="${sevClass}">${sevLabel}</span>
         </div>
         <div class="issue-note">${item.note || 'No description.'}</div>
         ${item.photos.map((uri) => `<img class="photo" src="${uri}" />`).join('')}
-      </div>`
-        )
-        .join('');
+      </div>`;
+      }
+    )
+    .join('');
 
-    return `<!DOCTYPE html><html><head><meta charset="utf-8"/><style>
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><style>
     body { font-family: Georgia, serif; color: #111; padding: 40px; }
     .header { display:flex; justify-content:space-between; border-bottom:2px solid #111; padding-bottom:16px; margin-bottom:24px; }
     .title { font-size:28px; font-weight:bold; letter-spacing:2px; }
@@ -66,7 +71,8 @@ export function pdfTemplate(inspection, settings = {}) {
     .room-heading { font-size:15px; font-weight:bold; margin:20px 0 8px; }
     .issue-card { border:1px solid #fca5a5; background:#fff5f5; padding:12px; margin-bottom:10px; border-radius:4px; }
     .issue-room { font-size:11px; font-weight:bold; color:#dc2626; text-transform:uppercase; }
-    .severity { float:right; background:#dc2626; color:#fff; padding:2px 6px; border-radius:3px; font-size:10px; }
+    .severity-major { float:right; background:#dc2626; color:#fff; padding:2px 6px; border-radius:3px; font-size:10px; font-weight:bold; }
+    .severity-minor { float:right; background:#d97706; color:#fff; padding:2px 6px; border-radius:3px; font-size:10px; font-weight:bold; }
     .issue-note { font-size:13px; margin-top:6px; }
     .photo { width:120px; height:90px; object-fit:cover; margin:6px 4px 0 0; border-radius:3px; }
     .footer { margin-top:40px; border-top:1px solid #ddd; padding-top:12px; text-align:center; font-size:11px; color:#999; }

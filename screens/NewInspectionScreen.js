@@ -52,6 +52,7 @@ export default function NewInspectionScreen({ navigation }) {
     // ── Add-Room modal state ──────────────────────────────────
     const [addRoomVisible, setAddRoomVisible] = useState(false);
     const [newRoomName, setNewRoomName] = useState('');
+    const [newRoomConditions, setNewRoomConditions] = useState('');
 
     const toggleRoom = (id) =>
         setSelectedRoomIds((prev) =>
@@ -63,16 +64,23 @@ export default function NewInspectionScreen({ navigation }) {
         if (!clean) {
             setAddRoomVisible(false);
             setNewRoomName('');
+            setNewRoomConditions('');
             return;
         }
+        // Parse conditions: split by comma or newline, filter empty
+        const rawConditions = newRoomConditions.trim();
+        const parsedItems = rawConditions
+            ? rawConditions.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean)
+            : ['General Condition', 'Cleanliness', 'Damage'];
         const newRoom = {
             id: 'custom-' + Date.now(),
             name: clean,
-            items: ['General Condition', 'Cleanliness', 'Damage'],
+            items: parsedItems,
         };
         setCustomRooms((prev) => [...prev, newRoom]);
         setSelectedRoomIds((prev) => [...prev, newRoom.id]);
         setNewRoomName('');
+        setNewRoomConditions('');
         setAddRoomVisible(false);
     };
 
@@ -103,25 +111,46 @@ export default function NewInspectionScreen({ navigation }) {
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalBox}>
                         <Text style={styles.modalTitle}>Add Custom Room</Text>
-                        <TextInput
-                            style={styles.modalInput}
-                            placeholder="Room name (e.g. Garage)"
-                            placeholderTextColor={COLORS.textMuted}
-                            value={newRoomName}
-                            onChangeText={setNewRoomName}
-                            autoFocus
-                            returnKeyType="done"
-                            onSubmitEditing={confirmAddRoom}
-                        />
+
+                        <View style={styles.modalFieldGroup}>
+                            <Text style={styles.modalLabel}>ROOM NAME</Text>
+                            <TextInput
+                                style={styles.modalInput}
+                                placeholder="e.g. Garage, Laundry Room"
+                                placeholderTextColor={COLORS.textMuted}
+                                value={newRoomName}
+                                onChangeText={setNewRoomName}
+                                autoFocus
+                                returnKeyType="next"
+                            />
+                        </View>
+
+                        <View style={styles.modalFieldGroup}>
+                            <Text style={styles.modalLabel}>CONDITIONS TO CHECK</Text>
+                            <Text style={styles.modalHint}>Separate with commas or new lines. Leave blank for defaults.</Text>
+                            <TextInput
+                                style={[styles.modalInput, styles.modalInputMulti]}
+                                placeholder={`General Condition, Cleanliness, Damage`}
+                                placeholderTextColor={COLORS.textMuted}
+                                value={newRoomConditions}
+                                onChangeText={setNewRoomConditions}
+                                multiline
+                                numberOfLines={3}
+                                textAlignVertical="top"
+                                returnKeyType="done"
+                                blurOnSubmit
+                            />
+                        </View>
+
                         <View style={styles.modalBtns}>
                             <TouchableOpacity
                                 style={styles.modalCancel}
-                                onPress={() => { setAddRoomVisible(false); setNewRoomName(''); }}
+                                onPress={() => { setAddRoomVisible(false); setNewRoomName(''); setNewRoomConditions(''); }}
                             >
                                 <Text style={styles.modalCancelText}>CANCEL</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.modalConfirm} onPress={confirmAddRoom}>
-                                <Text style={styles.modalConfirmText}>ADD</Text>
+                                <Text style={styles.modalConfirmText}>ADD ROOM</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -179,7 +208,12 @@ export default function NewInspectionScreen({ navigation }) {
                     {/* Rooms */}
                     <View style={styles.section}>
                         <Text style={styles.sectionLabel}>ROOMS INCLUDED</Text>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.roomsScroll}>
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            style={styles.roomsScroll}
+                            contentContainerStyle={styles.roomsScrollContent}
+                        >
                             {allRoomDefs.map((def) => {
                                 const active = selectedRoomIds.includes(def.id);
                                 return (
@@ -238,10 +272,14 @@ const styles = StyleSheet.create({
         padding: 24, gap: 16,
     },
     modalTitle: { fontSize: 16, fontWeight: '800', color: COLORS.textPrimary, textTransform: 'uppercase', letterSpacing: 1 },
+    modalFieldGroup: { gap: 4 },
+    modalLabel: { ...FONT.label, fontSize: 10, color: COLORS.textMuted },
+    modalHint: { fontSize: 11, color: COLORS.textMuted, marginBottom: 2, fontStyle: 'italic' },
     modalInput: {
         backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.amber,
-        borderRadius: RADIUS.sm, padding: 14, color: COLORS.textPrimary, fontSize: 16,
+        borderRadius: RADIUS.sm, padding: 12, color: COLORS.textPrimary, fontSize: 15,
     },
+    modalInputMulti: { minHeight: 72, textAlignVertical: 'top' },
     modalBtns: { flexDirection: 'row', gap: 10, justifyContent: 'flex-end' },
     modalCancel: {
         borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.sm,
@@ -282,7 +320,8 @@ const styles = StyleSheet.create({
         color: COLORS.textPrimary, fontSize: 16, minHeight: 90, textAlignVertical: 'top',
     },
     inputIcon: { position: 'absolute', right: 14, top: 14 },
-    roomsScroll: { marginBottom: 8 },
+    roomsScroll: { marginBottom: 8, overflow: 'visible' },
+    roomsScrollContent: { paddingVertical: 4, paddingRight: 12, alignItems: 'center' },
     chip: {
         borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.full,
         paddingHorizontal: 14, paddingVertical: 8, marginRight: 8,
