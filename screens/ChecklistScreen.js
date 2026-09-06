@@ -31,7 +31,6 @@ export default function ChecklistScreen({ navigation, route }) {
     const [addCondVisible, setAddCondVisible] = useState(false);
     const [newCondName, setNewCondName] = useState('');
 
-    // Track keyboard height and scroll to focused card
     useEffect(() => {
         const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
             setKbHeight(e.endCoordinates.height);
@@ -67,7 +66,6 @@ export default function ChecklistScreen({ navigation, route }) {
         });
     }, []);
 
-    // Remove a condition (item) from the active room
     const removeItem = useCallback((roomIdx, itemId) => {
         setInspection((prev) => {
             if (!prev) return prev;
@@ -81,7 +79,6 @@ export default function ChecklistScreen({ navigation, route }) {
         });
     }, []);
 
-    // Add a new condition (item) to the active room
     const addCondition = useCallback(() => {
         const clean = newCondName.trim();
         if (!clean) {
@@ -128,7 +125,7 @@ export default function ChecklistScreen({ navigation, route }) {
                     };
                 });
                 const updated = { ...prev, rooms: updatedRooms };
-                updateInspection(updated.id, updated);   // persist
+                updateInspection(updated.id, updated);   
                 return updated;
             });
         };
