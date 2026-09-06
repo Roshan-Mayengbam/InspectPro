@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { COLORS, FONT, SPACING, RADIUS } from '../theme';
-import { loadSettings, saveSettings, saveInspections } from '../utils/storage';
+import { saveInspections } from '../utils/storage.js';
 
 export default function SettingsScreen({ navigation }) {
     const [companyName, setCompanyName] = useState('');
@@ -43,7 +43,7 @@ export default function SettingsScreen({ navigation }) {
     };
 
     const handleSave = async () => {
-        await saveSettings({ companyName, inspectorName, phone, email, logoUri });
+        await saveInspections({ companyName, inspectorName, phone, email, logoUri });
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
     };
