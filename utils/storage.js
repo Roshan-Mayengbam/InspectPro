@@ -73,13 +73,6 @@ export async function loadSettings() {
     }
 }
 
-export async function saveSettings(settings) {
-    try {
-        await AsyncStorage.setItem(KEYS.SETTINGS, JSON.stringify(settings));
-    } catch (e) {
-        console.error('saveSettings:', e);
-    }
-}
 
 // ─── Onboarding ────────────────────────────────────────────────
 export async function isOnboarded() {
