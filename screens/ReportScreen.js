@@ -135,13 +135,6 @@ export default function ReportScreen({ navigation, route }) {
         }
     };
 
-    const handleEmail = async () => {
-        if (pdfPath) {
-            await Sharing.shareAsync(pdfPath, { mimeType: 'application/pdf' });
-        } else {
-            handleGeneratePdf();
-        }
-    };
 
     const isPdfReady = inspection.status === 'complete' || !!pdfPath;
 
